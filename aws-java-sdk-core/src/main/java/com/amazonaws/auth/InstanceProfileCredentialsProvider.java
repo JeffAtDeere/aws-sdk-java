@@ -60,11 +60,17 @@ public class InstanceProfileCredentialsProvider implements AWSCredentialsProvide
     private volatile ScheduledExecutorService executor;
 
     /**
+     * If the credentals should be automatically refreshed via background
+     * thread or not.
+     */
+    private volatile boolean refreshCredentialsAsync;
+
+    /**
      * @deprecated for the singleton method {@link #getInstance()}.
      */
     @Deprecated
     public InstanceProfileCredentialsProvider() {
-        this(false);
+        this(true);
     }
 
     /**
@@ -77,25 +83,16 @@ public class InstanceProfileCredentialsProvider implements AWSCredentialsProvide
      *            false.
      */
     public InstanceProfileCredentialsProvider(boolean refreshCredentialsAsync) {
+        this.refreshCredentialsAsync = refreshCredentialsAsync;
         credentialsFetcher = new EC2CredentialsFetcher(new InstanceMetadataCredentialsEndpointProvider());
+    }
 
-        if (refreshCredentialsAsync) {
-            executor = Executors.newScheduledThreadPool(1);
-            executor.scheduleWithFixedDelay(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        credentialsFetcher.getCredentials();
-                    } catch (AmazonClientException ace) {
-                        handleError(ace);
-                    } catch (RuntimeException re) {
-                        handleError(re);
-                    } catch (Error e) {
-                        handleError(e);
-                    }
-                }
-            }, 0, ASYNC_REFRESH_INTERVAL_TIME_MINUTES, TimeUnit.MINUTES);
-        }
+    public boolean isRefreshCredentialsAsync() {
+        return refreshCredentialsAsync;
+    }
+
+    public void setRefreshCredentialsAsync(boolean refreshCredentialsAsync) {
+        this.refreshCredentialsAsync = refreshCredentialsAsync;
     }
 
     /**
@@ -118,15 +115,39 @@ public class InstanceProfileCredentialsProvider implements AWSCredentialsProvide
         }
     }
 
-
     @Override
     public AWSCredentials getCredentials() {
-        return credentialsFetcher.getCredentials();
+        AWSCredentials credentials = credentialsFetcher.getCredentials();
+        controlAsyncRefresh();
+        return credentials;
     }
 
     @Override
     public void refresh() {
         credentialsFetcher.refresh();
+    }
+
+    private synchronized void controlAsyncRefresh() {
+        if (refreshCredentialsAsync && (executor == null)) {
+            executor = Executors.newScheduledThreadPool(1);
+            executor.scheduleWithFixedDelay(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        refresh();
+                    } catch (AmazonClientException ace) {
+                        handleError(ace);
+                    } catch (RuntimeException re) {
+                        handleError(re);
+                    } catch (Error e) {
+                        handleError(e);
+                    }
+                }
+            }, 0, ASYNC_REFRESH_INTERVAL_TIME_MINUTES, TimeUnit.MINUTES);
+        } else if (!refreshCredentialsAsync && (executor != null)) {
+            executor.shutdownNow();
+            executor = null;
+        }
     }
 
     private static class InstanceMetadataCredentialsEndpointProvider extends CredentialsEndpointProvider {
