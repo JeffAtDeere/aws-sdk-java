@@ -64,7 +64,7 @@ public class InstanceProfileCredentialsProvider implements AWSCredentialsProvide
      */
     @Deprecated
     public InstanceProfileCredentialsProvider() {
-        this(false);
+        this(Boolean.parseBoolean(System.getenv("AWS_EC2_ASYNC_REFRESH")));
     }
 
     /**
